@@ -33,7 +33,8 @@ class GUID(ctypes.Structure):
 # IIDs from debuggerservices.h
 IID_IUnknown = GUID(0x00000000, 0x0000, 0x0000, (0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46))
 IID_IMemoryService = GUID(0x84a8922E, 0x3C6C, 0x4499, (0x9B, 0x4A, 0x3A, 0x62, 0x24, 0x43, 0x5A, 0x79))
-IID_IDebuggerServices = GUID(0x2E6C515A, 0x9814, 0x48A5, (0x92, 0x90, 0xF6, 0xDE, 0x4C, 0x24, 0x46, 0x28))
+# IDebuggerServices IID from debuggerservices.h
+IID_IDebuggerServices = GUID(0xB4640016, 0x6CA0, 0x468E, (0xBA, 0x2C, 0x1F, 0xFF, 0x28, 0xDE, 0x7B, 0x72))
 # IHost IID from src/SOS/inc/host.h: E0CD8534-A88B-40D7-91BA-1B4C925761E9
 IID_IHost = GUID(0xE0CD8534, 0xA88B, 0x40D7, (0x91, 0xBA, 0x1B, 0x4C, 0x92, 0x57, 0x61, 0xE9))
 # ILLDBServices2 IID from src/SOS/inc/lldbservices.h
@@ -47,13 +48,47 @@ IID_IHostServices = GUID(0x27B2CB8D, 0xBDEE, 0x4CBD, (0xB6, 0xEF, 0x75, 0x88, 0x
 DEBUG_CLASS_USER_WINDOWS = 2
 DEBUG_DUMP_FULL = 1026
 IMAGE_FILE_MACHINE_AMD64 = 0x8664
+DEBUG_ANY_ID = 0xFFFFFFFF
 
 # Function pointer types for the vtables
 QI_FUNC_TYPE = ctypes.CFUNCTYPE(HRESULT, PVOID, ctypes.POINTER(GUID), ctypes.POINTER(PVOID))
 ADDREF_FUNC_TYPE = ctypes.CFUNCTYPE(ULONG, PVOID)
 RELEASE_FUNC_TYPE = ctypes.CFUNCTYPE(ULONG, PVOID)
 READ_VIRTUAL_FUNC_TYPE = ctypes.CFUNCTYPE(HRESULT, PVOID, ULONG64, PVOID, ULONG, ctypes.POINTER(ULONG))
-GET_MEM_SERVICE_FUNC_TYPE = ctypes.CFUNCTYPE(HRESULT, PVOID, ctypes.POINTER(PVOID))
+GET_OPERATING_SYSTEM_FUNC_TYPE = ctypes.CFUNCTYPE(HRESULT, PVOID, ctypes.POINTER(ctypes.c_int))
+DBG_GET_DEBUGGEE_TYPE_FUNC_TYPE = ctypes.CFUNCTYPE(HRESULT, PVOID, ctypes.POINTER(ULONG), ctypes.POINTER(ULONG))
+DBG_GET_PROCESSOR_TYPE_FUNC_TYPE = ctypes.CFUNCTYPE(HRESULT, PVOID, ctypes.POINTER(ULONG))
+DBG_ADD_COMMAND_FUNC_TYPE = ctypes.CFUNCTYPE(HRESULT, PVOID, PCSTR, PCSTR, ctypes.POINTER(PCSTR), ctypes.c_int)
+DBG_OUTPUT_STRING_FUNC_TYPE = ctypes.CFUNCTYPE(None, PVOID, ULONG, PCSTR)
+DBG_READ_VIRTUAL_FUNC_TYPE = READ_VIRTUAL_FUNC_TYPE
+DBG_WRITE_VIRTUAL_FUNC_TYPE = ctypes.CFUNCTYPE(HRESULT, PVOID, ULONG64, PVOID, ULONG, ctypes.POINTER(ULONG))
+DBG_GET_NUMBER_MODULES_FUNC_TYPE = ctypes.CFUNCTYPE(HRESULT, PVOID, ctypes.POINTER(ULONG), ctypes.POINTER(ULONG))
+DBG_GET_MODULE_BY_INDEX_FUNC_TYPE = ctypes.CFUNCTYPE(HRESULT, PVOID, ULONG, ctypes.POINTER(ULONG64))
+DBG_GET_MODULE_NAMES_FUNC_TYPE = ctypes.CFUNCTYPE(HRESULT, PVOID, ULONG, ULONG64, ctypes.c_void_p, ULONG, ctypes.POINTER(ULONG), ctypes.c_void_p, ULONG, ctypes.POINTER(ULONG), ctypes.c_void_p, ULONG, ctypes.POINTER(ULONG))
+DBG_GET_MODULE_INFO_FUNC_TYPE = ctypes.CFUNCTYPE(HRESULT, PVOID, ULONG, ctypes.POINTER(ULONG64), ctypes.POINTER(ULONG64), ctypes.POINTER(ULONG), ctypes.POINTER(ULONG))
+DBG_GET_MODULE_VERSION_INFO_FUNC_TYPE = ctypes.CFUNCTYPE(HRESULT, PVOID, ULONG, ULONG64, PCSTR, PVOID, ULONG, ctypes.POINTER(ULONG))
+DBG_GET_MODULE_BY_MODNAME_FUNC_TYPE = ctypes.CFUNCTYPE(HRESULT, PVOID, PCSTR, ULONG, ctypes.POINTER(ULONG), ctypes.POINTER(ULONG64))
+DBG_GET_NUMBER_THREADS_FUNC_TYPE = ctypes.CFUNCTYPE(HRESULT, PVOID, ctypes.POINTER(ULONG))
+DBG_GET_THREAD_IDS_BY_INDEX_FUNC_TYPE = ctypes.CFUNCTYPE(HRESULT, PVOID, ULONG, ULONG, ctypes.POINTER(ULONG), ctypes.POINTER(ULONG))
+DBG_GET_THREAD_CONTEXT_BY_SYSID_FUNC_TYPE = ctypes.CFUNCTYPE(HRESULT, PVOID, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32, PVOID)
+DBG_GET_CURRENT_PROCESS_SYSID_FUNC_TYPE = ctypes.CFUNCTYPE(HRESULT, PVOID, ctypes.POINTER(ULONG))
+DBG_GET_CURRENT_THREAD_SYSID_FUNC_TYPE = ctypes.CFUNCTYPE(HRESULT, PVOID, ctypes.POINTER(ULONG))
+DBG_SET_CURRENT_THREAD_SYSID_FUNC_TYPE = ctypes.CFUNCTYPE(HRESULT, PVOID, ULONG)
+DBG_GET_THREAD_TEB_FUNC_TYPE = ctypes.CFUNCTYPE(HRESULT, PVOID, ULONG, ctypes.POINTER(ULONG64))
+DBG_VIRTUAL_UNWIND_FUNC_TYPE = ctypes.CFUNCTYPE(HRESULT, PVOID, ULONG, ctypes.c_uint32, PVOID)
+DBG_GET_SYMBOL_PATH_FUNC_TYPE = ctypes.CFUNCTYPE(HRESULT, PVOID, ctypes.c_void_p, ULONG, ctypes.POINTER(ULONG))
+DBG_GET_SYMBOL_BY_OFFSET_FUNC_TYPE = ctypes.CFUNCTYPE(HRESULT, PVOID, ULONG, ULONG64, ctypes.c_void_p, ULONG, ctypes.POINTER(ULONG), ctypes.POINTER(ULONG64))
+DBG_GET_OFFSET_BY_SYMBOL_FUNC_TYPE = ctypes.CFUNCTYPE(HRESULT, PVOID, ULONG, PCSTR, ctypes.POINTER(ULONG64))
+DBG_GET_TYPE_ID_FUNC_TYPE = ctypes.CFUNCTYPE(HRESULT, PVOID, ULONG, PCSTR, ctypes.POINTER(ULONG64))
+DBG_GET_FIELD_OFFSET_FUNC_TYPE = ctypes.CFUNCTYPE(HRESULT, PVOID, ULONG, PCSTR, ULONG64, PCSTR, ctypes.POINTER(ULONG))
+DBG_GET_OUTPUT_WIDTH_FUNC_TYPE = ctypes.CFUNCTYPE(ULONG, PVOID)
+DBG_SUPPORTS_DML_FUNC_TYPE = ctypes.CFUNCTYPE(HRESULT, PVOID, ctypes.POINTER(ULONG))
+DBG_OUTPUT_DML_STRING_FUNC_TYPE = ctypes.CFUNCTYPE(None, PVOID, ULONG, PCSTR)
+DBG_ADD_MODULE_SYMBOL_FUNC_TYPE = ctypes.CFUNCTYPE(HRESULT, PVOID, PVOID, PCSTR)
+DBG_GET_LAST_EVENT_INFO_FUNC_TYPE = ctypes.CFUNCTYPE(HRESULT, PVOID, ctypes.POINTER(ULONG), ctypes.POINTER(ULONG), ctypes.POINTER(ULONG), PVOID, ULONG, ctypes.POINTER(ULONG), ctypes.c_char_p, ULONG, ctypes.POINTER(ULONG))
+DBG_FLUSH_CHECK_FUNC_TYPE = ctypes.CFUNCTYPE(None, PVOID)
+DBG_EXECUTE_HOST_COMMAND_FUNC_TYPE = ctypes.CFUNCTYPE(HRESULT, PVOID, PCSTR, PVOID)
+DBG_GET_DAC_SIG_VER_SETTINGS_FUNC_TYPE = ctypes.CFUNCTYPE(HRESULT, PVOID, ctypes.POINTER(ctypes.c_int))
 GET_HOST_TYPE_FUNC_TYPE = ctypes.CFUNCTYPE(ctypes.c_int, PVOID)
 GET_SERVICE_FUNC_TYPE = ctypes.CFUNCTYPE(HRESULT, PVOID, ctypes.POINTER(GUID), ctypes.POINTER(PVOID))
 GET_CURRENT_TARGET_FUNC_TYPE = ctypes.CFUNCTYPE(HRESULT, PVOID, ctypes.POINTER(PVOID))
@@ -86,8 +121,40 @@ class IMemoryServiceVtbl(ctypes.Structure):
 class IDebuggerServicesVtbl(ctypes.Structure):
     _fields_ = [
         ("IUnknown", IUnknownVtbl),
-        ("GetMemoryService", GET_MEM_SERVICE_FUNC_TYPE),
-        # Other IDebuggerServices methods would go here
+        ("GetOperatingSystem", GET_OPERATING_SYSTEM_FUNC_TYPE),
+        ("GetDebuggeeType", DBG_GET_DEBUGGEE_TYPE_FUNC_TYPE),
+        ("GetProcessorType", DBG_GET_PROCESSOR_TYPE_FUNC_TYPE),
+        ("AddCommand", DBG_ADD_COMMAND_FUNC_TYPE),
+        ("OutputString", DBG_OUTPUT_STRING_FUNC_TYPE),
+        ("ReadVirtual", DBG_READ_VIRTUAL_FUNC_TYPE),
+        ("WriteVirtual", DBG_WRITE_VIRTUAL_FUNC_TYPE),
+        ("GetNumberModules", DBG_GET_NUMBER_MODULES_FUNC_TYPE),
+        ("GetModuleByIndex", DBG_GET_MODULE_BY_INDEX_FUNC_TYPE),
+        ("GetModuleNames", DBG_GET_MODULE_NAMES_FUNC_TYPE),
+        ("GetModuleInfo", DBG_GET_MODULE_INFO_FUNC_TYPE),
+        ("GetModuleVersionInformation", DBG_GET_MODULE_VERSION_INFO_FUNC_TYPE),
+        ("GetModuleByModuleName", DBG_GET_MODULE_BY_MODNAME_FUNC_TYPE),
+        ("GetNumberThreads", DBG_GET_NUMBER_THREADS_FUNC_TYPE),
+        ("GetThreadIdsByIndex", DBG_GET_THREAD_IDS_BY_INDEX_FUNC_TYPE),
+        ("GetThreadContextBySystemId", DBG_GET_THREAD_CONTEXT_BY_SYSID_FUNC_TYPE),
+        ("GetCurrentProcessSystemId", DBG_GET_CURRENT_PROCESS_SYSID_FUNC_TYPE),
+        ("GetCurrentThreadSystemId", DBG_GET_CURRENT_THREAD_SYSID_FUNC_TYPE),
+        ("SetCurrentThreadSystemId", DBG_SET_CURRENT_THREAD_SYSID_FUNC_TYPE),
+        ("GetThreadTeb", DBG_GET_THREAD_TEB_FUNC_TYPE),
+        ("VirtualUnwind", DBG_VIRTUAL_UNWIND_FUNC_TYPE),
+        ("GetSymbolPath", DBG_GET_SYMBOL_PATH_FUNC_TYPE),
+        ("GetSymbolByOffset", DBG_GET_SYMBOL_BY_OFFSET_FUNC_TYPE),
+        ("GetOffsetBySymbol", DBG_GET_OFFSET_BY_SYMBOL_FUNC_TYPE),
+        ("GetTypeId", DBG_GET_TYPE_ID_FUNC_TYPE),
+        ("GetFieldOffset", DBG_GET_FIELD_OFFSET_FUNC_TYPE),
+        ("GetOutputWidth", DBG_GET_OUTPUT_WIDTH_FUNC_TYPE),
+        ("SupportsDml", DBG_SUPPORTS_DML_FUNC_TYPE),
+        ("OutputDmlString", DBG_OUTPUT_DML_STRING_FUNC_TYPE),
+        ("AddModuleSymbol", DBG_ADD_MODULE_SYMBOL_FUNC_TYPE),
+        ("GetLastEventInformation", DBG_GET_LAST_EVENT_INFO_FUNC_TYPE),
+        ("FlushCheck", DBG_FLUSH_CHECK_FUNC_TYPE),
+        ("ExecuteHostCommand", DBG_EXECUTE_HOST_COMMAND_FUNC_TYPE),
+        ("GetDacSignatureVerificationSettings", DBG_GET_DAC_SIG_VER_SETTINGS_FUNC_TYPE),
     ]
 
 class IHostVtbl(ctypes.Structure):
@@ -155,7 +222,7 @@ class ILLDBServicesVtbl(ctypes.Structure):
         ("GetModuleByIndex", ctypes.CFUNCTYPE(HRESULT, PVOID, ULONG, ctypes.POINTER(ULONG64))),
         ("GetModuleByModuleName", ctypes.CFUNCTYPE(HRESULT, PVOID, PCSTR, ULONG, ctypes.POINTER(ULONG), ctypes.POINTER(ULONG64))),
         ("GetModuleByOffset", ctypes.CFUNCTYPE(HRESULT, PVOID, ULONG64, ULONG, ctypes.POINTER(ULONG), ctypes.POINTER(ULONG64))),
-        ("GetModuleNames", ctypes.CFUNCTYPE(HRESULT, PVOID, ULONG, ULONG64, ctypes.c_char_p, ULONG, ctypes.POINTER(ULONG), ctypes.c_char_p, ULONG, ctypes.POINTER(ULONG), ctypes.c_char_p, ULONG, ctypes.POINTER(ULONG))),
+    ("GetModuleNames", ctypes.CFUNCTYPE(HRESULT, PVOID, ULONG, ULONG64, ctypes.c_void_p, ULONG, ctypes.POINTER(ULONG), ctypes.c_void_p, ULONG, ctypes.POINTER(ULONG), ctypes.c_void_p, ULONG, ctypes.POINTER(ULONG))),
         ("GetLineByOffset", ctypes.CFUNCTYPE(HRESULT, PVOID, ULONG64, ctypes.POINTER(ULONG), ctypes.c_char_p, ULONG, ctypes.POINTER(ULONG), ctypes.POINTER(ULONG64))),
         ("GetSourceFileLineOffsets", ctypes.CFUNCTYPE(HRESULT, PVOID, PCSTR, ctypes.POINTER(ULONG64), ULONG, ctypes.POINTER(ULONG))),
         ("FindSourceFile", ctypes.CFUNCTYPE(HRESULT, PVOID, ULONG, PCSTR, ULONG, ctypes.POINTER(ULONG), ctypes.c_char_p, ULONG, ctypes.POINTER(ULONG))),
@@ -196,6 +263,10 @@ class GdbServices:
     """Implements the SOS services interfaces in Python."""
     def __init__(self):
         self._ref = 0
+        # Caches for discovered runtime
+        self._coreclr_base = None
+        self._coreclr_path = None
+        self._coreclr_dir_buf = None
         # Create the vtable for the base IUnknown interface first.
         iunknown_vtbl = IUnknownVtbl(
             QI_FUNC_TYPE(self.query_interface),
@@ -211,7 +282,40 @@ class GdbServices:
         )
         self._idebugger_vtbl = IDebuggerServicesVtbl(
             iunknown_vtbl,
-            GET_MEM_SERVICE_FUNC_TYPE(self.get_memory_service)
+            GET_OPERATING_SYSTEM_FUNC_TYPE(self.dbg_get_operating_system),
+            DBG_GET_DEBUGGEE_TYPE_FUNC_TYPE(self.lldb_get_debuggee_type),
+            DBG_GET_PROCESSOR_TYPE_FUNC_TYPE(self.lldb_get_processor_type),
+            DBG_ADD_COMMAND_FUNC_TYPE(self.dbg_add_command),
+            DBG_OUTPUT_STRING_FUNC_TYPE(self.dbg_output_string),
+            DBG_READ_VIRTUAL_FUNC_TYPE(self.lldb_read_virtual),
+            DBG_WRITE_VIRTUAL_FUNC_TYPE(self.lldb_write_virtual),
+            DBG_GET_NUMBER_MODULES_FUNC_TYPE(self.lldb_get_number_modules),
+            DBG_GET_MODULE_BY_INDEX_FUNC_TYPE(self.lldb_get_module_by_index),
+            DBG_GET_MODULE_NAMES_FUNC_TYPE(self.dbg_get_module_names),
+            DBG_GET_MODULE_INFO_FUNC_TYPE(self.dbg_get_module_info),
+            DBG_GET_MODULE_VERSION_INFO_FUNC_TYPE(self.lldb2_get_module_version_information),
+            DBG_GET_MODULE_BY_MODNAME_FUNC_TYPE(self.lldb_get_module_by_module_name),
+            DBG_GET_NUMBER_THREADS_FUNC_TYPE(self.dbg_get_number_threads),
+            DBG_GET_THREAD_IDS_BY_INDEX_FUNC_TYPE(self.dbg_get_thread_ids_by_index),
+            DBG_GET_THREAD_CONTEXT_BY_SYSID_FUNC_TYPE(self.lldb_get_thread_context_by_system_id),
+            DBG_GET_CURRENT_PROCESS_SYSID_FUNC_TYPE(self.lldb_get_current_process_system_id),
+            DBG_GET_CURRENT_THREAD_SYSID_FUNC_TYPE(self.lldb_get_current_thread_system_id),
+            DBG_SET_CURRENT_THREAD_SYSID_FUNC_TYPE(self.dbg_set_current_thread_system_id),
+            DBG_GET_THREAD_TEB_FUNC_TYPE(self.dbg_get_thread_teb),
+            DBG_VIRTUAL_UNWIND_FUNC_TYPE(self.lldb_virtual_unwind),
+            DBG_GET_SYMBOL_PATH_FUNC_TYPE(self.dbg_get_symbol_path),
+            DBG_GET_SYMBOL_BY_OFFSET_FUNC_TYPE(self.dbg_get_symbol_by_offset),
+            DBG_GET_OFFSET_BY_SYMBOL_FUNC_TYPE(self.dbg_get_offset_by_symbol),
+            DBG_GET_TYPE_ID_FUNC_TYPE(self.dbg_get_type_id),
+            DBG_GET_FIELD_OFFSET_FUNC_TYPE(self.dbg_get_field_offset),
+            DBG_GET_OUTPUT_WIDTH_FUNC_TYPE(self.dbg_get_output_width),
+            DBG_SUPPORTS_DML_FUNC_TYPE(self.dbg_supports_dml),
+            DBG_OUTPUT_DML_STRING_FUNC_TYPE(self.dbg_output_dml_string),
+            DBG_ADD_MODULE_SYMBOL_FUNC_TYPE(self.lldb2_add_module_symbol),
+            DBG_GET_LAST_EVENT_INFO_FUNC_TYPE(self.lldb_get_last_event_information),
+            DBG_FLUSH_CHECK_FUNC_TYPE(self.dbg_flush_check),
+            DBG_EXECUTE_HOST_COMMAND_FUNC_TYPE(self.dbg_execute_host_command),
+            DBG_GET_DAC_SIG_VER_SETTINGS_FUNC_TYPE(self.dbg_get_dac_signature_ver_settings),
         )
         self._ihost_vtbl = IHostVtbl(
             iunknown_vtbl,
@@ -256,7 +360,7 @@ class GdbServices:
             ctypes.CFUNCTYPE(HRESULT, PVOID, ULONG, ctypes.POINTER(ULONG64))(self.lldb_get_module_by_index),
             ctypes.CFUNCTYPE(HRESULT, PVOID, PCSTR, ULONG, ctypes.POINTER(ULONG), ctypes.POINTER(ULONG64))(self.lldb_get_module_by_module_name),
             ctypes.CFUNCTYPE(HRESULT, PVOID, ULONG64, ULONG, ctypes.POINTER(ULONG), ctypes.POINTER(ULONG64))(self.lldb_get_module_by_offset),
-            ctypes.CFUNCTYPE(HRESULT, PVOID, ULONG, ULONG64, ctypes.c_char_p, ULONG, ctypes.POINTER(ULONG), ctypes.c_char_p, ULONG, ctypes.POINTER(ULONG), ctypes.c_char_p, ULONG, ctypes.POINTER(ULONG))(self.lldb_get_module_names),
+            ctypes.CFUNCTYPE(HRESULT, PVOID, ULONG, ULONG64, ctypes.c_void_p, ULONG, ctypes.POINTER(ULONG), ctypes.c_void_p, ULONG, ctypes.POINTER(ULONG), ctypes.c_void_p, ULONG, ctypes.POINTER(ULONG))(self.lldb_get_module_names),
             ctypes.CFUNCTYPE(HRESULT, PVOID, ULONG64, ctypes.POINTER(ULONG), ctypes.c_char_p, ULONG, ctypes.POINTER(ULONG), ctypes.POINTER(ULONG64))(self.lldb_get_line_by_offset),
             ctypes.CFUNCTYPE(HRESULT, PVOID, PCSTR, ctypes.POINTER(ULONG64), ULONG, ctypes.POINTER(ULONG))(self.lldb_get_source_file_line_offsets),
             ctypes.CFUNCTYPE(HRESULT, PVOID, ULONG, PCSTR, ULONG, ctypes.POINTER(ULONG), ctypes.c_char_p, ULONG, ctypes.POINTER(ULONG))(self.lldb_find_source_file),
@@ -377,10 +481,7 @@ class GdbServices:
         return self._ref
 
     # --- IDebuggerServices Implementation ---
-    def get_memory_service(self, this_ptr, mem_service_ptr):
-        self._trace("call into get_memory_service")
-        # Return a pointer to our IMemoryService implementation
-        return self.query_interface(this_ptr, ctypes.pointer(IID_IMemoryService), mem_service_ptr)
+    # All methods are implemented as dbg_* or lldb_* above and wired in the vtable
 
     # --- IMemoryService Implementation ---
     def read_virtual(self, this_ptr, address, buffer, bytes_requested, bytes_read_ptr):
@@ -458,10 +559,10 @@ class GdbServices:
 
     def host_get_current_target(self, this_ptr, out_ptr):
         self._trace("call into host_get_current_target")
-        # Return success with no target for now
+        # Explicitly indicate not implemented so SOS doesn't rely on this path
         if out_ptr:
             out_ptr.contents.value = 0
-        return 0
+        return 0x80004001  # E_NOTIMPL
 
     # --- ILLDBServices2 stub methods ---
     def lldb2_load_native_symbols(self, this_ptr, runtimeOnly, callback):
@@ -474,8 +575,65 @@ class GdbServices:
         return 0 # S_OK
 
     def lldb2_get_module_info(self, this_ptr, index, moduleBase, moduleSize, timestamp, checksum):
-        self._trace("call into lldb2_get_module_info")
-        return 0x80004001 # E_NOTIMPL
+        self._trace(f"call into lldb2_get_module_info index={index}")
+        # We only support a single module (libcoreclr.so) at index 0
+        if index != 0:
+            return 0x80004005  # E_FAIL
+
+        # Ensure we have path/base cached
+        path, base_addr = self._scan_coreclr()
+        if not path or base_addr is None:
+            return 0x80004005  # E_FAIL
+
+        # Compute an approximate module size by union of libcoreclr.so mappings
+        pid = self._get_pid()
+        min_start = None
+        max_end = None
+        try:
+            if pid:
+                maps_path = f"/proc/{pid}/maps"
+                with open(maps_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    for line in f:
+                        if 'libcoreclr.so' not in line:
+                            continue
+                        parts = line.strip().split()
+                        if len(parts) < 6:
+                            continue
+                        # Recompose path and normalize deleted marker
+                        p = ' '.join(parts[5:])
+                        if p.endswith(' (deleted)'):
+                            p = p[:-10]
+                        if not p.startswith('/'):
+                            continue
+                        if p != path:
+                            continue
+                        try:
+                            start_str, end_str = parts[0].split('-')
+                            start = int(start_str, 16)
+                            end = int(end_str, 16)
+                        except Exception:
+                            continue
+                        if min_start is None or start < min_start:
+                            min_start = start
+                        if max_end is None or end > max_end:
+                            max_end = end
+        except Exception as ex:
+            self._trace(f"GetModuleInfo maps scan error: {ex}")
+
+        size_val = 0
+        if min_start is not None and max_end is not None and max_end > min_start:
+            size_val = max_end - min_start
+
+        if moduleBase:
+            moduleBase.contents.value = ctypes.c_uint64(base_addr).value
+        if moduleSize:
+            moduleSize.contents.value = ctypes.c_uint64(size_val).value
+        if timestamp:
+            timestamp.contents.value = 0
+        if checksum:
+            checksum.contents.value = 0
+        self._trace(f"  -> base=0x{base_addr:x} size=0x{size_val:x}")
+        return 0  # S_OK
 
     def lldb2_get_module_version_information(self, this_ptr, index, base, item, buffer, bufferSize, versionInfoSize):
         self._trace("call into lldb2_get_module_version_information")
@@ -486,12 +644,198 @@ class GdbServices:
         return 0 # S_OK
 
     # --- ILLDBServices stub methods ---
+    # --- Helpers ---
+    def _get_pid(self):
+        try:
+            inf = gdb.selected_inferior()
+            pid = getattr(inf, 'pid', None)
+            if pid and pid > 0:
+                return pid
+        except Exception:
+            pass
+        return None
+
+    def _scan_coreclr(self):
+        pid = self._get_pid()
+        if not pid:
+            return None, None
+        maps_path = f"/proc/{pid}/maps"
+        found_path = None
+        base = None
+        try:
+            with open(maps_path, 'r', encoding='utf-8', errors='ignore') as f:
+                for line in f:
+                    if 'libcoreclr.so' not in line:
+                        continue
+                    parts = line.rstrip('\n').split()
+                    if len(parts) < 6:
+                        continue
+                    addr_range = parts[0]
+                    # Reconstruct path from 6th token onward to handle " (deleted)"
+                    path_field = ' '.join(parts[5:])
+                    # Normalize: strip trailing " (deleted)" marker if present
+                    if path_field.endswith(' (deleted)'):
+                        path_field = path_field[:-10]
+                    path = path_field if path_field.startswith('/') else None
+                    if not path:
+                        continue
+                    try:
+                        start_str = addr_range.split('-')[0]
+                        start = int(start_str, 16)
+                    except Exception:
+                        continue
+                    if found_path is None:
+                        found_path = path
+                        base = start
+                    else:
+                        # choose the lowest start for the same file
+                        if start < base:
+                            base = start
+            if found_path:
+                self._coreclr_path = found_path
+                self._coreclr_base = base
+                # Keep directory buffer alive
+                directory = os.path.dirname(found_path)
+                if directory:
+                    path_bytes = directory.encode('utf-8')
+                    self._coreclr_dir_buf = ctypes.create_string_buffer(path_bytes + b"\x00")
+                self._trace(f"_scan_coreclr found path={self._coreclr_path} base=0x{self._coreclr_base:x}")
+                return self._coreclr_path, self._coreclr_base
+        except Exception as ex:
+            self._trace(f"_scan_coreclr error: {ex}")
+        # not found
+        self._coreclr_path = None
+        self._coreclr_base = None
+        self._coreclr_dir_buf = None
+        return None, None
     # --- IHostServices stub methods ---
     def hostservices_get_host(self, this_ptr, ppHost):
-        self._trace("call into hostservices_get_host")
+        self._trace("call into hostservices_get_host (disabled)")
+        # Don't provide an IHost so SOS uses internal target discovery
         if ppHost:
-            ppHost.contents.value = ctypes.addressof(self.ihost_ptr)
-        self.add_ref(this_ptr)
+            ppHost.contents.value = 0
+        return 0x80004002  # E_NOINTERFACE
+
+    # --- IDebuggerServices minimal implementations ---
+    def dbg_get_operating_system(self, this_ptr, os_ptr):
+        # Linux
+        if os_ptr:
+            os_ptr.contents.value = 2
+        return 0
+
+    def dbg_add_command(self, this_ptr, command, help_text, aliases, numberOfAliases):
+        return 0
+
+    def dbg_output_string(self, this_ptr, mask, message):
+        try:
+            gdb.write(message.decode() if isinstance(message, (bytes, bytearray)) else str(message))
+        except Exception:
+            pass
+
+    def dbg_get_module_info(self, this_ptr, index, moduleBase, moduleSize, timestamp, checksum):
+        # For coreclr at index 0
+        _, base = self._scan_coreclr()
+        if index != 0 or base is None:
+            return 0x80004005
+        # reuse size logic from lldb2_get_module_info
+        size = ctypes.c_uint64(0)
+        dummy_ts = ctypes.c_uint32(0)
+        dummy_cs = ctypes.c_uint32(0)
+        self.lldb2_get_module_info(None, 0, moduleBase, ctypes.byref(size), ctypes.byref(dummy_ts), ctypes.byref(dummy_cs))
+        if moduleSize:
+            moduleSize.contents.value = size.value
+        if timestamp:
+            timestamp.contents.value = 0
+        if checksum:
+            checksum.contents.value = 0
+        return 0
+
+    def dbg_get_module_names(self, this_ptr, index, base, imageNameBuffer, imageNameBufferSize, imageNameSize, moduleNameBuffer, moduleNameBufferSize, moduleNameSize, loadedImageNameBuffer, loadedImageNameBufferSize, loadedImageNameSize):
+        path, _ = self._scan_coreclr()
+        if index != 0 or not path:
+            return 0x80004005
+        img = path.encode('utf-8')
+        name = os.path.basename(path).encode('utf-8')
+        def fill(buf_voidp, bufSize, sizePtr, data_bytes):
+            try:
+                if sizePtr:
+                    sizePtr.contents.value = len(data_bytes) + 1
+                if not buf_voidp or not bufSize or bufSize <= 0:
+                    return
+                # Compute destination address integer
+                addr = buf_voidp if isinstance(buf_voidp, int) else ctypes.cast(buf_voidp, ctypes.c_void_p).value
+                if not addr:
+                    return
+                n = min(len(data_bytes), max(0, bufSize - 1))
+                if n > 0:
+                    ctypes.memmove(addr, data_bytes, n)
+                # Null-terminate at offset n
+                ctypes.memmove(addr + n, b"\x00", 1)
+            except Exception as ex:
+                # Never raise from a ctypes callback
+                try:
+                    self._trace(f"lldb_get_module_names.fill error: {ex}")
+                except Exception:
+                    pass
+        fill(imageNameBuffer, imageNameBufferSize, imageNameSize, img)
+        fill(moduleNameBuffer, moduleNameBufferSize, moduleNameSize, name)
+        fill(loadedImageNameBuffer, loadedImageNameBufferSize, loadedImageNameSize, img)
+        return 0
+
+    def dbg_get_number_threads(self, this_ptr, number_ptr):
+        if number_ptr:
+            number_ptr.contents.value = 0
+        return 0
+
+    def dbg_get_thread_ids_by_index(self, this_ptr, start, count, ids, sysIds):
+        return 0
+
+    def dbg_set_current_thread_system_id(self, this_ptr, sysId):
+        return 0
+
+    def dbg_get_thread_teb(self, this_ptr, sysId, pteb):
+        return 0x80004001
+
+    def dbg_get_symbol_path(self, this_ptr, buffer, bufferSize, pathSize):
+        if pathSize:
+            pathSize.contents.value = 1
+        if buffer and bufferSize:
+            buffer[0] = 0
+        return 0
+
+    def dbg_get_symbol_by_offset(self, this_ptr, moduleIndex, offset, nameBuffer, nameBufferSize, nameSize, displacement):
+        return 0x80004001
+
+    def dbg_get_offset_by_symbol(self, this_ptr, moduleIndex, name, offset):
+        return 0x80004001
+
+    def dbg_get_type_id(self, this_ptr, moduleIndex, typeName, typeId):
+        return 0x80004001
+
+    def dbg_get_field_offset(self, this_ptr, moduleIndex, typeName, typeId, fieldName, offset):
+        return 0x80004001
+
+    def dbg_get_output_width(self, this_ptr):
+        return 80
+
+    def dbg_supports_dml(self, this_ptr, supported):
+        if supported:
+            supported.contents.value = 0
+        return 0
+
+    def dbg_output_dml_string(self, this_ptr, mask, message):
+        self.dbg_output_string(this_ptr, mask, message)
+
+    def dbg_flush_check(self, this_ptr):
+        return None
+
+    def dbg_execute_host_command(self, this_ptr, commandLine, callback):
+        return 0x80004001
+
+    def dbg_get_dac_signature_ver_settings(self, this_ptr, enabled_ptr):
+        # Disable DAC signature verification so SOS can load DAC/DBI from runtime dir
+        if enabled_ptr:
+            enabled_ptr.contents.value = 0
         return 0
 
     def hostservices_register_debugger_services(self, this_ptr, iunk):
@@ -530,6 +874,14 @@ class GdbServices:
         # void
     def lldb_get_coreclr_directory(self, this_ptr):
         self._trace("call into lldb_get_coreclr_directory")
+        try:
+            path, base = self._scan_coreclr()
+            if path and self._coreclr_dir_buf:
+                self._trace(f"coreclr directory: {os.path.dirname(path)} base=0x{base:x}")
+                return ctypes.cast(self._coreclr_dir_buf, ctypes.c_char_p)
+        except Exception as ex:
+            self._trace(f"lldb_get_coreclr_directory error: {ex}")
+        self._trace("coreclr directory: NOT FOUND")
         return None
     def lldb_get_expression(self, this_ptr, exp):
         self._trace("call into lldb_get_expression")
@@ -661,21 +1013,90 @@ class GdbServices:
         return 0x80004001
     def lldb_get_number_modules(self, this_ptr, loaded, unloaded):
         self._trace("call into lldb_get_number_modules")
-        if loaded: loaded.contents.value = 0
-        if unloaded: unloaded.contents.value = 0
-        return 0
+        path, _ = self._scan_coreclr()
+        # Report 1 module if we found coreclr; else 0
+        if loaded:
+            loaded.contents.value = 1 if path else 0
+        if unloaded:
+            unloaded.contents.value = 0
+        self._trace(f"  -> loaded={loaded.contents.value if loaded else 'n/a'} unloaded={unloaded.contents.value if unloaded else 'n/a'} path={path}")
+        return 0  # S_OK
     def lldb_get_module_by_index(self, this_ptr, index, base):
-        self._trace("call into lldb_get_module_by_index")
-        return 0x80004001
+        self._trace(f"call into lldb_get_module_by_index index={index}")
+        _, coreclr_base = self._scan_coreclr()
+        if index == 0 and coreclr_base is not None:
+            if base:
+                base.contents.value = ctypes.c_uint64(coreclr_base).value
+            self._trace(f"  -> base=0x{coreclr_base:x}")
+            return 0  # S_OK
+        return 0x80004005  # E_FAIL
     def lldb_get_module_by_module_name(self, this_ptr, name, startIndex, index, base):
-        self._trace("call into lldb_get_module_by_module_name")
-        return 0x80004001
+        try:
+            q = name.decode() if name else ""
+        except Exception:
+            q = ""
+        self._trace(f"call into lldb_get_module_by_module_name name='{q}' startIndex={startIndex}")
+        path, coreclr_base = self._scan_coreclr()
+        if coreclr_base is None:
+            return 0x80004005  # E_FAIL
+        # match by basename contains query (case-insensitive)
+        base_name = os.path.basename(path)
+        if startIndex > 0:
+            return 0x80004005  # only a single module supported
+        if not q or q.lower() in base_name.lower():
+            if index:
+                index.contents.value = 0
+            if base:
+                base.contents.value = ctypes.c_uint64(coreclr_base).value
+            self._trace(f"  -> index=0 base=0x{coreclr_base:x}")
+            return 0  # S_OK
+        return 0x80004005  # E_FAIL
     def lldb_get_module_by_offset(self, this_ptr, offset, startIndex, index, base):
         self._trace("call into lldb_get_module_by_offset")
         return 0x80004001
     def lldb_get_module_names(self, this_ptr, index, base, imageNameBuffer, imageNameBufferSize, imageNameSize, moduleNameBuffer, moduleNameBufferSize, moduleNameSize, loadedImageNameBuffer, loadedImageNameBufferSize, loadedImageNameSize):
-        self._trace("call into lldb_get_module_names")
-        return 0x80004001
+        self._trace(f"call into lldb_get_module_names index={index} base={base}")
+        path, coreclr_base = self._scan_coreclr()
+        if not path:
+            return 0x80004005  # E_FAIL
+        # Support index 0 or DEBUG_ANY_ID with base match
+        if index != 0:
+            if index != DEBUG_ANY_ID:
+                return 0x80004005
+            # When index is DEBUG_ANY_ID, base must match coreclr
+            try:
+                if base != ctypes.c_uint64(coreclr_base).value:
+                    return 0x80004005
+            except Exception:
+                return 0x80004005
+        img = path.encode('utf-8')
+        name = os.path.basename(path).encode('utf-8')
+
+        def fill(buf_voidp, bufSize, sizePtr, data_bytes):
+            try:
+                if sizePtr:
+                    sizePtr.contents.value = len(data_bytes) + 1
+                if not buf_voidp or not bufSize or bufSize <= 0:
+                    return
+                # Cast void* to char*
+                char_p = ctypes.cast(buf_voidp, ctypes.POINTER(ctypes.c_char))
+                n = min(len(data_bytes), max(0, bufSize - 1))
+                if n > 0:
+                    ctypes.memmove(char_p, data_bytes, n)
+                # Null-terminate safely
+                try:
+                    char_p[n] = b"\x00"
+                except Exception:
+                    # Fallback: use memmove to write a zero byte
+                    zero = (ctypes.c_char * 1)()
+                    ctypes.memmove(ctypes.cast(ctypes.addressof(char_p.contents) + n, ctypes.c_void_p), zero, 1)
+            except Exception as ex:
+                self._trace(f"lldb_get_module_names.fill error: {ex}")
+
+        fill(imageNameBuffer, imageNameBufferSize, imageNameSize, img)
+        fill(moduleNameBuffer, moduleNameBufferSize, moduleNameSize, name)
+        fill(loadedImageNameBuffer, loadedImageNameBufferSize, loadedImageNameSize, img)
+        return 0
     def lldb_get_line_by_offset(self, this_ptr, offset, line, fileBuffer, fileBufferSize, fileSize, displacement):
         self._trace("call into lldb_get_line_by_offset")
         return 0x80004001
@@ -687,8 +1108,10 @@ class GdbServices:
         return 0x80004001
     def lldb_get_current_process_system_id(self, this_ptr, id_ptr):
         self._trace("call into lldb_get_current_process_system_id")
-        if id_ptr: id_ptr.contents.value = 0
-        return 0
+        if id_ptr:
+            pid = self._get_pid() or 0
+            id_ptr.contents.value = pid
+        return 0  # S_OK
     def lldb_get_current_thread_id(self, this_ptr, id_ptr):
         self._trace("call into lldb_get_current_thread_id")
         if id_ptr: id_ptr.contents.value = 0
@@ -757,8 +1180,8 @@ class SOSCommand(gdb.Command):
             init_func.argtypes = [PVOID, PVOID]
             init_func.restype = HRESULT
             
-            # Pass our GdbServices object: first as IHost (punk), second as IDebuggerServices
-            hr = init_func(ctypes.byref(SOSCommand.gdb_services.ihost_ptr), ctypes.byref(SOSCommand.gdb_services.idebugger_ptr))
+            # Pass NULL for IHost so SOS uses its internal Host/Target; still pass our IDebuggerServices
+            hr = init_func(ctypes.c_void_p(0), ctypes.byref(SOSCommand.gdb_services.idebugger_ptr))
             
             if hr != 0:
                 gdb.write(f"SOSInitializeByHost failed with HRESULT {hr}.\n")
