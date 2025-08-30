@@ -9,6 +9,17 @@ import re
 # Adjust this path based on your build output directory.
 SOS_LIB_PATH = "/workspaces/diagnostics/artifacts/bin/linux.x64.Debug/libsos.so"
 
+# Trace control (off by default). Enable with env var SOS_PY_TRACE=1 or via the 'sostrace' GDB command.
+def _parse_bool_env(val: str, default: bool = False) -> bool:
+    if val is None:
+        return default
+    v = str(val).strip().lower()
+    if v in ("1", "true", "yes", "on"): return True
+    if v in ("0", "false", "no", "off"): return False
+    return default
+
+TRACE_ENABLED = _parse_bool_env(os.getenv("SOS_PY_TRACE"), False)
+
 # --- Ctypes Definitions for SOS Interfaces ---
 # These definitions must match the C++ headers (debuggerservices.h, pal.h)
 
@@ -394,6 +405,8 @@ class GdbServices:
 
     # --- Trace helper ---
     def _trace(self, msg: str):
+        if not TRACE_ENABLED:
+            return
         try:
             gdb.write(msg + "\n")
         except Exception:
@@ -417,56 +430,63 @@ class GdbServices:
             except Exception:
                 return "<INVALID-GUID>"
 
-        try:
-            gdb.write(f"QueryInterface called for IID {fmt_guid(iid)}\n")
-        except Exception:
-            pass
+        if TRACE_ENABLED:
+            try:
+                gdb.write(f"QueryInterface called for IID {fmt_guid(iid)}\n")
+            except Exception:
+                pass
 
         if guid_equal(iid, IID_IUnknown) or guid_equal(iid, IID_IDebuggerServices):
             obj_ptr.contents.value = ctypes.addressof(self.idebugger_ptr)
-            try:
-                gdb.write("QI -> IDebuggerServices\n")
-            except Exception:
-                pass
+            if TRACE_ENABLED:
+                try:
+                    gdb.write("QI -> IDebuggerServices\n")
+                except Exception:
+                    pass
             self.add_ref(this_ptr)
             return 0 # S_OK
         if guid_equal(iid, IID_IMemoryService):
             obj_ptr.contents.value = ctypes.addressof(self.imemory_ptr)
-            try:
-                gdb.write("QI -> IMemoryService\n")
-            except Exception:
-                pass
+            if TRACE_ENABLED:
+                try:
+                    gdb.write("QI -> IMemoryService\n")
+                except Exception:
+                    pass
             self.add_ref(this_ptr)
             return 0 # S_OK
         if guid_equal(iid, IID_IHost):
             obj_ptr.contents.value = ctypes.addressof(self.ihost_ptr)
-            try:
-                gdb.write("QI -> IHost\n")
-            except Exception:
-                pass
+            if TRACE_ENABLED:
+                try:
+                    gdb.write("QI -> IHost\n")
+                except Exception:
+                    pass
             self.add_ref(this_ptr)
             return 0 # S_OK
         if guid_equal(iid, IID_ILLDBServices):
             obj_ptr.contents.value = ctypes.addressof(self.illldb_ptr)
-            try:
-                gdb.write("QI -> ILLDBServices (stub)\n")
-            except Exception:
-                pass
+            if TRACE_ENABLED:
+                try:
+                    gdb.write("QI -> ILLDBServices (stub)\n")
+                except Exception:
+                    pass
             self.add_ref(this_ptr)
             return 0 # S_OK
         if guid_equal(iid, IID_ILLDBServices2):
             obj_ptr.contents.value = ctypes.addressof(self.illldb2_ptr)
-            try:
-                gdb.write("QI -> ILLDBServices2 (stub)\n")
-            except Exception:
-                pass
+            if TRACE_ENABLED:
+                try:
+                    gdb.write("QI -> ILLDBServices2 (stub)\n")
+                except Exception:
+                    pass
             self.add_ref(this_ptr)
             return 0 # S_OK
         obj_ptr.contents.value = 0
-        try:
-            gdb.write("QI -> E_NOINTERFACE\n")
-        except Exception:
-            pass
+        if TRACE_ENABLED:
+            try:
+                gdb.write("QI -> E_NOINTERFACE\n")
+            except Exception:
+                pass
         return 0x80004002 # E_NOINTERFACE
 
     def add_ref(self, this_ptr):
@@ -510,15 +530,16 @@ class GdbServices:
     def host_get_service(self, this_ptr, guid_ptr, out_ptr):
         self._trace("call into host_get_service")
         # Trace the requested GUID and try to provide common services
-        try:
-            if guid_ptr:
-                g = guid_ptr.contents
-                b = ctypes.string_at(ctypes.byref(g), ctypes.sizeof(GUID))
-                import uuid
-                guid_str = str(uuid.UUID(bytes_le=b)).upper()
-                gdb.write(f"call into host_get_service for IID {guid_str}\n")
-        except Exception:
-            pass
+        if TRACE_ENABLED:
+            try:
+                if guid_ptr:
+                    g = guid_ptr.contents
+                    b = ctypes.string_at(ctypes.byref(g), ctypes.sizeof(GUID))
+                    import uuid
+                    guid_str = str(uuid.UUID(bytes_le=b)).upper()
+                    gdb.write(f"call into host_get_service for IID {guid_str}\n")
+            except Exception:
+                pass
 
         if out_ptr:
             out_ptr.contents.value = 0
@@ -910,7 +931,8 @@ class GdbServices:
         return 0
     def lldb_get_interrupt(self, this_ptr):
         self._trace("call into lldb_get_interrupt")
-        return 0
+        # dbgeng semantics: S_OK if interrupted, S_FALSE if not.
+        return 1  # S_FALSE: no user interrupt pending
     def lldb_output_va_list(self, this_ptr, mask, fmt, va_list_ptr):
         self._trace("call into lldb_output_va_list")
         try:
@@ -979,8 +1001,8 @@ class GdbServices:
         self._trace("call into lldb_execute")
         try:
             cmd = command.decode() if command else ""
-            if cmd:
-                # Print the command for visibility; we don't execute it yet.
+            if cmd and TRACE_ENABLED:
+                # Print the command for visibility when tracing
                 gdb.write(f"[ILLDBServices.Execute] {cmd}\n")
         except Exception:
             pass
@@ -1165,15 +1187,19 @@ class SOSCommand(gdb.Command):
             return False
 
         try:
-            gdb.write("before CDLL\n")
+            if TRACE_ENABLED:
+                gdb.write("[sos.py] Loading libsos.so...\n")
             SOSCommand.sos_handle = ctypes.CDLL(SOS_LIB_PATH)
-            gdb.write("before set GdbServices\n")
+            if TRACE_ENABLED:
+                gdb.write("[sos.py] Creating GdbServices...\n")
             SOSCommand.gdb_services = GdbServices()
 
             # Initialize the SOS library
-            gdb.write("before set init_func\n")
+            if TRACE_ENABLED:
+                gdb.write("[sos.py] Resolving SOSInitializeByHost...\n")
             init_func = SOSCommand.sos_handle.SOSInitializeByHost
-            gdb.write(f"after set {init_func}\n")
+            if TRACE_ENABLED:
+                gdb.write("[sos.py] Calling SOSInitializeByHost(NULL, IDebuggerServices) ...\n")
             
             # Correctly define the function signature with two PVOID input parameters
             # SOSInitializeByHost(IUnknown* punk, IDebuggerServices* debuggerServices)
@@ -1240,7 +1266,8 @@ class SOSCommand(gdb.Command):
             # Execute the SOS command using the main GdbServices pointer
             # FEATURE_PAL DECLARE_API expects PDEBUG_CLIENT which is ILLDBServices*
             client_ptr = ctypes.byref(SOSCommand.gdb_services.illldb_ptr)
-            gdb.write("dispatching SOS command with ILLDBServices client\n")
+            if TRACE_ENABLED:
+                gdb.write("[sos.py] Dispatching SOS command with ILLDBServices client\n")
             hr = sos_func(client_ptr, (arg or "").encode('utf-8'))
             if hr != 0:
                 gdb.write(f"Command '{self.name}' failed with HRESULT {hr}.\n")
@@ -1254,3 +1281,25 @@ class SOSCommand(gdb.Command):
 # To add more commands, just add a new line here.
 DumpObjCommand = SOSCommand("dumpobj")
 # ClrStackCommand = SOSCommand("clrstack")
+
+# --- Trace toggle command ---
+class SOSTraceCommand(gdb.Command):
+    """Toggle sos.py tracing. Usage: sostrace [on|off|status]"""
+    def __init__(self):
+        super(SOSTraceCommand, self).__init__("sostrace", gdb.COMMAND_NONE)
+
+    def invoke(self, arg, from_tty):
+        global TRACE_ENABLED
+        a = (arg or "").strip().lower()
+        if a in ("on", "1", "true"):
+            TRACE_ENABLED = True
+        elif a in ("off", "0", "false"):
+            TRACE_ENABLED = False
+        elif a in ("", "status"):
+            pass
+        else:
+            gdb.write("Usage: sostrace [on|off|status]\n")
+            return
+        gdb.write(f"sostrace: {'on' if TRACE_ENABLED else 'off'}\n")
+
+SOSTraceCommand()
