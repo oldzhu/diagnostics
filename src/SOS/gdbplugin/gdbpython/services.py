@@ -15,6 +15,10 @@ class GdbServices:
         self._coreclr_base = None
         self._coreclr_path = None
         self._coreclr_dir_buf = None
+        self._current_thread_sysid = None  # cached OS thread id (LWP)
+        # Cache of last known register context per system thread id to serve
+        # offset queries without touching gdb APIs from foreign threads.
+        self._context_cache = {}  # sysid -> { 'rip': int, 'rsp': int, 'rbp': int }
 
         iunknown_vtbl = IUnknownVtbl(QI_FUNC_TYPE(self.query_interface), ADDREF_FUNC_TYPE(self.add_ref), RELEASE_FUNC_TYPE(self.release))
 
@@ -243,20 +247,116 @@ class GdbServices:
         self._coreclr_dir_buf = None
         return None, None
 
+    def _get_threads(self):
+        try:
+            inf = gdb.selected_inferior()
+            return list(inf.threads()) if inf else []
+        except Exception:
+            return []
+
+    def _thread_sysid(self, thread: gdb.InferiorThread):
+        try:
+            ptid = thread.ptid  # (pid, lwpid, tid?)
+            if isinstance(ptid, tuple) and len(ptid) >= 2:
+                return int(ptid[1])
+            if isinstance(ptid, tuple) and len(ptid) >= 3 and ptid[2]:
+                return int(ptid[2])
+        except Exception:
+            pass
+        try:
+            return int(thread.ptid[0])
+        except Exception:
+            return 0
+
+    def _find_thread_by_sysid(self, sysid: int):
+        for t in self._get_threads():
+            try:
+                if self._thread_sysid(t) == sysid:
+                    return t
+            except Exception:
+                continue
+        return None
+
+    def _fill_amd64_dt_context(self, frame, contextFlags, context_ptr):
+        try:
+            # DT_CONTEXT_AMD64 | CONTROL | INTEGER
+            # Map: Rip, Rsp, Rbp and Rax..R15
+            regs = {
+                'rip': ('Rip',), 'rsp': ('Rsp',), 'rbp': ('Rbp',), 'rax': ('Rax',), 'rbx': ('Rbx',), 'rcx': ('Rcx',),
+                'rdx': ('Rdx',), 'rsi': ('RSi','Rsi'), 'rdi': ('RDy','Rdi'), 'r8': ('R8',), 'r9': ('R9',), 'r10': ('R10',),
+                'r11': ('R11',), 'r12': ('R12',), 'r13': ('R13',), 'r14': ('R14',), 'r15': ('R15',)
+            }
+            # Helper to set a 64-bit field in DT_CONTEXT by name
+            class DT_AMD64(ctypes.Structure):
+                _fields_ = [
+                    ("pad1", ctypes.c_byte * 120),  # up to Rax
+                    ("Rax", ULONG64), ("Rcx", ULONG64), ("Rdx", ULONG64), ("Rbx", ULONG64),
+                    ("Rsp", ULONG64), ("Rbp", ULONG64), ("Rsi", ULONG64), ("Rdi", ULONG64),
+                    ("R8", ULONG64), ("R9", ULONG64), ("R10", ULONG64), ("R11", ULONG64),
+                    ("R12", ULONG64), ("R13", ULONG64), ("R14", ULONG64), ("R15", ULONG64),
+                    ("Rip", ULONG64)
+                ]
+            # Treat context_ptr as a DT_AMD64*
+            dt = ctypes.cast(context_ptr, ctypes.POINTER(DT_AMD64)).contents
+            for gdb_name, field_names in regs.items():
+                try:
+                    val = int(frame.read_register(gdb_name))
+                except Exception:
+                    continue
+                for fname in field_names:
+                    if hasattr(dt, fname):
+                        setattr(dt, fname, val)
+                        break
+        except Exception as ex:
+            trace(f"_fill_amd64_dt_context error: {ex}")
+
     # --- IMemoryService ---
     def read_virtual(self, this_ptr, address, buffer, bytes_requested, bytes_read_ptr):
         trace("call into read_virtual")
+        total_read = 0
         try:
             inferior = gdb.selected_inferior()
-            mem = inferior.read_memory(address, bytes_requested)
-            bytes_read = len(mem)
-            ctypes.memmove(buffer, mem.tobytes(), bytes_read)
+            page_size = 4096
+            remaining = int(bytes_requested)
+            dest_addr = buffer if isinstance(buffer, int) else ctypes.cast(buffer, ctypes.c_void_p).value
+            cur_addr = int(address)
+            while remaining > 0:
+                # Read up to the next page boundary to avoid crossing into unmapped pages
+                to_page = page_size - (cur_addr % page_size)
+                chunk_size = min(remaining, to_page)
+                # Try decreasing chunk sizes on failure
+                while chunk_size > 0:
+                    try:
+                        chunk = inferior.read_memory(cur_addr, chunk_size)
+                        data = chunk.tobytes()
+                        if data:
+                            ctypes.memmove(dest_addr + total_read, data, len(data))
+                            total_read += len(data)
+                            cur_addr += len(data)
+                            remaining -= len(data)
+                        break
+                    except gdb.MemoryError:
+                        # Reduce chunk and retry within this page
+                        if chunk_size == 1:
+                            chunk_size = 0
+                        else:
+                            chunk_size = max(1, chunk_size // 2)
+                if chunk_size == 0:
+                    # Could not read even a single byte at this address; advance to next page
+                    next_page = ((cur_addr // page_size) + 1) * page_size
+                    if next_page <= cur_addr:
+                        break
+                    skip = next_page - cur_addr
+                    cur_addr = next_page
+                    if skip > remaining:
+                        break
+                    remaining -= skip
             if bytes_read_ptr:
-                bytes_read_ptr.contents.value = bytes_read
-            return 0
-        except gdb.MemoryError:
+                bytes_read_ptr.contents.value = total_read
+            return 0 if total_read > 0 else 0x80070005
+        except Exception:
             if bytes_read_ptr:
-                bytes_read_ptr.contents.value = 0
+                bytes_read_ptr.contents.value = total_read
             return 0x80070005
 
     # --- IHost ---
@@ -266,17 +366,6 @@ class GdbServices:
 
     def host_get_service(self, this_ptr, guid_ptr, out_ptr):
         trace("call into host_get_service")
-        if TRACE_ENABLED:
-            try:
-                if guid_ptr:
-                    g = guid_ptr.contents
-                    b = ctypes.string_at(ctypes.byref(g), ctypes.sizeof(GUID))
-                    import uuid
-                    guid_str = str(uuid.UUID(bytes_le=b)).upper()
-                    gdb.write(f"call into host_get_service for IID {guid_str}\n")
-            except Exception:
-                pass
-
         if out_ptr:
             out_ptr.contents.value = 0
 
@@ -318,10 +407,10 @@ class GdbServices:
 
     # --- IHostServices ---
     def hostservices_get_host(self, this_ptr, ppHost):
-        trace("call into hostservices_get_host (disabled)")
+        trace("call into hostservices_get_host")
         if ppHost:
-            ppHost.contents.value = 0
-        return 0x80004002
+            ppHost.contents.value = ctypes.addressof(self.ihost_ptr)
+        return 0
 
     def hostservices_register_debugger_services(self, this_ptr, iunk):
         trace("call into hostservices_register_debugger_services")
@@ -456,7 +545,8 @@ class GdbServices:
 
     def lldb_virtual_unwind(self, this_ptr, threadID, contextSize, context):
         trace("call into lldb_virtual_unwind")
-        return 0x80004001
+        # For now return S_OK without modifying context; SOS may still walk managed frames using its own unwinder
+        return 0
 
     def lldb_set_exception_callback(self, this_ptr, cb):
         trace("call into lldb_set_exception_callback")
@@ -468,6 +558,7 @@ class GdbServices:
 
     def lldb_get_interrupt(self, this_ptr):
         trace("call into lldb_get_interrupt")
+        # Return S_FALSE semantics to indicate no interrupt
         return 1
 
     def lldb_output_va_list(self, this_ptr, mask, fmt, va_list_ptr):
@@ -675,26 +766,98 @@ class GdbServices:
     def lldb_get_current_thread_id(self, this_ptr, id_ptr):
         trace("call into lldb_get_current_thread_id")
         if id_ptr:
-            id_ptr.contents.value = 0
+            threads = self._get_threads()
+            cur = gdb.selected_thread()
+            engine_id = 0
+            if cur is not None:
+                try:
+                    for idx, t in enumerate(threads):
+                        if t.ptid == cur.ptid:
+                            engine_id = idx
+                            break
+                except Exception:
+                    pass
+            id_ptr.contents.value = engine_id
         return 0
 
     def lldb_set_current_thread_id(self, this_ptr, id_value):
         trace("call into lldb_set_current_thread_id")
+        threads = self._get_threads()
+        try:
+            if 0 <= id_value < len(threads):
+                threads[id_value].switch()
+                self._current_thread_sysid = self._thread_sysid(threads[id_value])
+        except Exception:
+            pass
         return 0
 
     def lldb_get_current_thread_system_id(self, this_ptr, sysId):
         trace("call into lldb_get_current_thread_system_id")
         if sysId:
-            sysId.contents.value = 0
+            sys_id = self._current_thread_sysid
+            if not sys_id:
+                try:
+                    cur = gdb.selected_thread()
+                    if cur is not None:
+                        sys_id = self._thread_sysid(cur)
+                except Exception:
+                    sys_id = 0
+            sysId.contents.value = sys_id or 0
         return 0
 
     def lldb_get_thread_id_by_system_id(self, this_ptr, sysId, id_ptr):
         trace("call into lldb_get_thread_id_by_system_id")
-        return 0x80004001
+        try:
+            if id_ptr:
+                threads = self._get_threads()
+                for idx, t in enumerate(threads):
+                    if self._thread_sysid(t) == sysId:
+                        id_ptr.contents.value = idx
+                        return 0
+        except Exception:
+            pass
+        return 0x80004005
 
     def lldb_get_thread_context_by_system_id(self, this_ptr, sysId, contextFlags, contextSize, context):
         trace("call into lldb_get_thread_context_by_system_id")
-        return 0x80004001
+        if not context or contextSize < 128:
+            return 0x80004005
+        try:
+            thread = self._find_thread_by_sysid(sysId)
+            if thread is None:
+                return 0x80004005
+            frame = None
+            try:
+                thread.switch()
+                frame = gdb.newest_frame()
+            except Exception:
+                pass
+            if frame is None:
+                return 0x80004005
+            # Fill minimal AMD64 DT_CONTEXT
+            # Write ContextFlags at offset matching DT_CONTEXT layout: first 4 bytes
+            ctypes.memset(context, 0, contextSize)
+            # For SOS, any non-zero flags that include CONTROL|INTEGER are acceptable
+            CONTEXT_AMD64 = 0x00100000
+            CONTEXT_CONTROL = 0x00000001
+            CONTEXT_INTEGER = 0x00000002
+            flags = CONTEXT_AMD64 | CONTEXT_CONTROL | CONTEXT_INTEGER
+            ctypes.cast(context, ctypes.POINTER(ULONG)).contents.value = flags
+            self._fill_amd64_dt_context(frame, flags, ctypes.cast(context, ctypes.c_void_p))
+            # Update cache for this sysid so offset getters can avoid using gdb APIs
+            try:
+                rip = int(frame.read_register('rip'))
+                rsp = int(frame.read_register('rsp'))
+                rbp = int(frame.read_register('rbp'))
+                self._context_cache[sysId] = {'rip': rip, 'rsp': rsp, 'rbp': rbp}
+                # Remember current thread sysid
+                self._current_thread_sysid = sysId
+            except Exception:
+                pass
+            return 0
+        except Exception as ex:
+            trace(f"lldb_get_thread_context_by_system_id error: {ex}")
+            return 0x80004005
 
     def lldb_get_value_by_name(self, this_ptr, name, value_ptr):
         trace("call into lldb_get_value_by_name")
@@ -702,15 +865,36 @@ class GdbServices:
 
     def lldb_get_instruction_offset(self, this_ptr, offset_ptr):
         trace("call into lldb_get_instruction_offset")
-        return 0x80004001
+        try:
+            if offset_ptr and self._current_thread_sysid in self._context_cache:
+                rip = self._context_cache[self._current_thread_sysid].get('rip', 0)
+                offset_ptr.contents.value = ctypes.c_uint64(rip).value
+                return 0
+        except Exception:
+            pass
+        return 0x80004005
 
     def lldb_get_stack_offset(self, this_ptr, offset_ptr):
         trace("call into lldb_get_stack_offset")
-        return 0x80004001
+        try:
+            if offset_ptr and self._current_thread_sysid in self._context_cache:
+                rsp = self._context_cache[self._current_thread_sysid].get('rsp', 0)
+                offset_ptr.contents.value = ctypes.c_uint64(rsp).value
+                return 0
+        except Exception:
+            pass
+        return 0x80004005
 
     def lldb_get_frame_offset(self, this_ptr, offset_ptr):
         trace("call into lldb_get_frame_offset")
-        return 0x80004001
+        try:
+            if offset_ptr and self._current_thread_sysid in self._context_cache:
+                rbp = self._context_cache[self._current_thread_sysid].get('rbp', 0)
+                offset_ptr.contents.value = ctypes.c_uint64(rbp).value
+                return 0
+        except Exception:
+            pass
+        return 0x80004005
 
     # --- IDebuggerServices ---
     def dbg_get_operating_system(self, this_ptr, os_ptr):
@@ -728,15 +912,47 @@ class GdbServices:
             pass
 
     def dbg_get_module_info(self, this_ptr, index, moduleBase, moduleSize, timestamp, checksum):
-        _, base = self._scan_coreclr()
-        if index != 0 or base is None:
+        path, base_addr = self._scan_coreclr()
+        if index != 0 or base_addr is None:
             return 0x80004005
-        size = ctypes.c_uint64(0)
-        dummy_ts = ctypes.c_uint32(0)
-        dummy_cs = ctypes.c_uint32(0)
-        self.lldb2_get_module_info(None, 0, moduleBase, ctypes.byref(size), ctypes.byref(dummy_ts), ctypes.byref(dummy_cs))
+        # Determine module size by scanning all libcoreclr.so mappings
+        pid = self._get_pid()
+        min_start = None
+        max_end = None
+        try:
+            if pid and path:
+                maps_path = f"/proc/{pid}/maps"
+                with open(maps_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    for line in f:
+                        if 'libcoreclr.so' not in line:
+                            continue
+                        parts = line.strip().split()
+                        if len(parts) < 6:
+                            continue
+                        p = ' '.join(parts[5:])
+                        if p.endswith(' (deleted)'):
+                            p = p[:-10]
+                        if not p.startswith('/') or p != path:
+                            continue
+                        try:
+                            start_str, end_str = parts[0].split('-')
+                            start = int(start_str, 16)
+                            end = int(end_str, 16)
+                        except Exception:
+                            continue
+                        if min_start is None or start < min_start:
+                            min_start = start
+                        if max_end is None or end > max_end:
+                            max_end = end
+        except Exception as ex:
+            trace(f"dbg_get_module_info maps scan error: {ex}")
+        size_val = 0
+        if min_start is not None and max_end is not None and max_end > min_start:
+            size_val = max_end - min_start
+        if moduleBase:
+            moduleBase.contents.value = ctypes.c_uint64(base_addr).value
         if moduleSize:
-            moduleSize.contents.value = size.value
+            moduleSize.contents.value = ctypes.c_uint64(size_val).value
         if timestamp:
             timestamp.contents.value = 0
         if checksum:
@@ -771,23 +987,65 @@ class GdbServices:
 
     def dbg_get_number_threads(self, this_ptr, number_ptr):
         if number_ptr:
-            number_ptr.contents.value = 0
+            try:
+                number_ptr.contents.value = len(self._get_threads())
+            except Exception:
+                number_ptr.contents.value = 0
         return 0
 
     def dbg_get_thread_ids_by_index(self, this_ptr, start, count, ids, sysIds):
-        return 0
+        try:
+            threads = self._get_threads()
+            n = len(threads)
+            if start >= n or count == 0:
+                return 0
+            limit = min(count, n - start)
+            for i in range(limit):
+                idx = start + i
+                t = threads[idx]
+                engine_id = idx
+                sys_id = self._thread_sysid(t)
+                if ids:
+                    try:
+                        ids[i] = engine_id
+                    except Exception:
+                        pass
+                if sysIds:
+                    try:
+                        sysIds[i] = sys_id
+                    except Exception:
+                        pass
+            return 0
+        except Exception as ex:
+            trace(f"dbg_get_thread_ids_by_index error: {ex}")
+            return 0x80004005
 
     def dbg_set_current_thread_system_id(self, this_ptr, sysId):
-        return 0
+        try:
+            t = self._find_thread_by_sysid(sysId)
+            if t is not None:
+                t.switch()
+                self._current_thread_sysid = sysId
+                return 0
+        except Exception:
+            pass
+        return 0x80004005
 
     def dbg_get_thread_teb(self, this_ptr, sysId, pteb):
         return 0x80004001
 
     def dbg_get_symbol_path(self, this_ptr, buffer, bufferSize, pathSize):
+        # Report empty symbol path and write a terminating NUL if a buffer is provided
         if pathSize:
             pathSize.contents.value = 1
-        if buffer and bufferSize:
-            buffer[0] = 0
+        try:
+            if buffer and bufferSize and bufferSize > 0:
+                # 'buffer' may be an integer address or a c_void_p; normalize to address
+                addr = buffer if isinstance(buffer, int) else ctypes.cast(buffer, ctypes.c_void_p).value
+                if addr:
+                    ctypes.memmove(addr, b"\x00", 1)
+        except Exception:
+            pass
         return 0
 
     def dbg_get_symbol_by_offset(self, this_ptr, moduleIndex, offset, nameBuffer, nameBufferSize, nameSize, displacement):

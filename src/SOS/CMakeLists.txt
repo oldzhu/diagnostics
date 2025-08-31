@@ -2,6 +2,7 @@ include(${CLR_SHARED_DIR}/shared.cmake)
 
 if(CLR_CMAKE_HOST_UNIX)
   add_subdirectory(lldbplugin)
+  add_subdirectory(gdbplugin)
 endif(CLR_CMAKE_HOST_UNIX)
 
 # lldbplugin doesn't build with these options
