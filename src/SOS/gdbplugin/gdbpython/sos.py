@@ -17,6 +17,25 @@ from tracing import TRACE_ENABLED, SOSTraceCommand
 SOS_LIB_PATH = os.getenv("SOS_LIB_PATH", "/workspaces/diagnostics/artifacts/bin/linux.x64.Debug/libsos.so")
 BRIDGE_LIB_PATH = os.getenv("SOS_BRIDGE_LIB_PATH", "/workspaces/diagnostics/artifacts/bin/linux.x64.Debug/libsosgdbbridge.so")
 
+# Common HRESULT hints for nicer error messages
+_HRES_HINTS = {
+    0x80070057: "Invalid argument. Check command options.",
+    0x80004001: "Not implemented for this target.",
+    0x80004002: "Interface not supported (service unavailable).",
+    0x80004003: "Invalid pointer (internal).",
+    0x80004005: "Unspecified failure. Try 'sostrace on' for details.",
+    0x8007000E: "Out of memory.",
+    0x80070005: "Access denied or memory read failed.",
+    0x800704C7: "Operation canceled.",
+}
+
+def _hint_for_hresult(hr: int) -> str:
+    try:
+        h = hr & 0xFFFFFFFF
+    except Exception:
+        h = hr
+    return _HRES_HINTS.get(h, "")
+
 
 class SOSCommand(gdb.Command):
     """A base class for SOS commands that handles loading libsos."""
@@ -119,30 +138,62 @@ class SOSCommand(gdb.Command):
                 "assemblies", "clrmodules", "loadsymbols", "setsymbolserver", "logging", "analyzeoom",
                 "traverseheap"
             }
+            # Common alias for managed help
+            if self.name.lower() == "soshelp":
+                managed_only.add("soshelp")
             if self.name.lower() in managed_only and sys.platform.startswith("linux"):
-                # Prefer libsos forwarder; fall back to bridge
+                # Prefer bridge managed dispatch; fall back to libsos forwarder
                 cmd = self.name.lower().encode('utf-8')
                 args = (arg or "").encode('utf-8')
-                try:
-                    bridge = getattr(SOSCommand, 'bridge_handle', None)
-                    if bridge is not None:
+                bridge = getattr(SOSCommand, 'bridge_handle', None)
+                attempted = False
+                hres_bridge = None
+                hosting_initialized = False
+                if bridge is not None:
+                    try:
                         dispatch = bridge.DispatchManagedCommand
                         dispatch.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
                         dispatch.restype = ctypes.c_int
-                        hres = dispatch(cmd, args)
+                        hres_bridge = dispatch(cmd, args)
+                        attempted = True
                         if TRACE_ENABLED:
-                            gdb.write(f"[sos] Bridge DispatchManagedCommand('{self.name}') => 0x{hres:08x}\n")
-                        if hres == 0:
+                            gdb.write(f"[sos] Bridge DispatchManagedCommand('{self.name}') => 0x{hres_bridge:08x}\n")
+                        if hres_bridge == 0:
                             return
-                except Exception:
-                    pass
+                        # Check hosting status if bridge is present
+                        try:
+                            get_host = getattr(bridge, 'GetHostForSos', None)
+                            if get_host is not None:
+                                get_host.argtypes = []
+                                get_host.restype = ctypes.c_void_p
+                                hosting_initialized = bool(get_host())
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
+                # Try libsos forwarder as a fallback
+                hres_forwarder = None
                 try:
                     if getattr(SOSCommand, 'sos_dispatch_managed', None):
-                        hres = SOSCommand.sos_dispatch_managed(cmd, args)
-                        if hres == 0:
+                        hres_forwarder = SOSCommand.sos_dispatch_managed(cmd, args)
+                        attempted = True or attempted
+                        if hres_forwarder == 0:
                             return
                 except Exception:
                     pass
+                # Distinguish hosting-not-initialized vs command failure
+                if hosting_initialized or (hres_bridge not in (None, 0)) or (hres_forwarder not in (None, 0)):
+                    # Managed layer handled the call but returned a failure HRESULT
+                    h = hres_bridge if hres_bridge not in (None, 0) else (hres_forwarder if hres_forwarder not in (None, 0) else 0)
+                    if h:
+                        h32 = h & 0xFFFFFFFF
+                        hint = _hint_for_hresult(h32)
+                        if hint:
+                            gdb.write(f"Managed command '{self.name}' failed (HRESULT=0x{h32:08x}). {hint}\n")
+                        else:
+                            gdb.write(f"Managed command '{self.name}' failed (HRESULT=0x{h32:08x}).\n")
+                    return
+                # If we never managed to dispatch, print guidance
                 gdb.write(
                     "This command is managed-only on Linux and isn’t exported from libsos.so.\n"
                     "Managed hosting is not initialized or failed.\n"
@@ -210,6 +261,8 @@ class SOSCommand(gdb.Command):
 DumpObjCommand = SOSCommand("dumpobj")
 ClrStackCommand = SOSCommand("clrstack")
 DsoCommand = SOSCommand("dso")
+DumpHeapCommand = SOSCommand("dumpheap")
+SosHelpCommand = SOSCommand("soshelp")
 
 SOSTraceCommand()
 
