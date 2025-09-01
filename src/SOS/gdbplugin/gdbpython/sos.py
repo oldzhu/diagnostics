@@ -29,6 +29,101 @@ _HRES_HINTS = {
     0x800704C7: "Operation canceled.",
 }
 
+# Manual mapping of command name -> libsos export symbol to align with LLDB registrations
+MANUAL_EXPORTS = {
+    # Native-style commands
+    "clrstack": "ClrStack",
+    "clrthreads": "Threads",
+    "clru": "u",
+    "dbgout": "dbgout",
+    "dumpalc": "DumpALC",
+    "dumparray": "DumpArray",
+    "dumpassembly": "DumpAssembly",
+    "dumpclass": "DumpClass",
+    "dumpdelegate": "DumpDelegate",
+    "dumpdomain": "DumpDomain",
+    "dumpgcdata": "DumpGCData",
+    "dumpil": "DumpIL",
+    "dumplog": "DumpLog",
+    "dumpmd": "DumpMD",
+    "dumpmodule": "DumpModule",
+    "dumpmt": "DumpMT",
+    "dumpobj": "DumpObj",
+    "dumpsig": "DumpSig",
+    "dumpsigelem": "DumpSigElem",
+    "dumpstack": "DumpStack",
+    "dumpvc": "DumpVC",
+    "eestack": "EEStack",
+    "eeversion": "EEVersion",
+    "ehinfo": "EHInfo",
+    "findappdomain": "FindAppDomain",
+    "findroots": "FindRoots",
+    "gchandles": "GCHandles",
+    "gcinfo": "GCInfo",
+    "histclear": "HistClear",
+    "histinit": "HistInit",
+    "histobj": "HistObj",
+    "histobjfind": "HistObjFind",
+    "histroot": "HistRoot",
+    "histstats": "HistStats",
+    "ip2md": "IP2MD",
+    "name2ee": "Name2EE",
+    "pe": "PrintException",
+    "printexception": "PrintException",
+    "runtimes": "runtimes",
+    "stoponcatch": "StopOnCatch",
+    "setclrpath": "SetClrPath",
+    "soshelp": "Help",
+    "sosstatus": "SOSStatus",
+    "sosflush": "SOSFlush",
+    "syncblk": "SyncBlk",
+    "threadstate": "ThreadState",
+    "token2ee": "token2ee",
+    # Common managed/also-exported
+    "dumpheap": "DumpHeap",
+    "gcroot": "GcRoot",
+    "gcwhere": "GcWhere",
+    "listnearobj": "ListNearObj",
+    "loadsymbols": "LoadSymbols",
+    "logging": "Logging",
+    "objsize": "ObjSize",
+    "pathto": "PathTo",
+    "setsymbolserver": "SetSymbolServer",
+    "threadpool": "ThreadPool",
+    "verifyheap": "VerifyHeap",
+    "verifyobj": "VerifyObj",
+    "traverseheap": "TraverseHeap",
+    # Aliases and special
+    "dso": "DumpStackObjects",
+    "dumpstackobjects": "DumpStackObjects",
+}
+
+def _to_export_candidates_common(cmd: str):
+    """Build a list of plausible export names for a given SOS command name."""
+    cmd = (cmd or "").strip()
+    candidates = []
+    m = MANUAL_EXPORTS.get(cmd)
+    if m:
+        candidates.append(m)
+    # Title-case from separators (e.g., dump-heap -> DumpHeap)
+    title = ''.join(part.capitalize() for part in re.split(r'[^0-9A-Za-z]+', cmd) if part)
+    if title and title not in candidates:
+        candidates.append(title)
+    cap = cmd.capitalize()
+    if cap not in candidates:
+        candidates.append(cap)
+    if cmd and cmd not in candidates:
+        candidates.append(cmd)
+    return candidates
+
+# Commands that require IMemoryRegionService/NativeAddressHelper and are only
+# supported under WinDbg/cdb today. Provide a friendlier message in GDB.
+_UNSUPPORTED_WINDBG_ONLY = {
+    "gctonative",
+    "findpointersin",
+    "maddress",
+}
+
 def _hint_for_hresult(hr: int) -> str:
     try:
         h = hr & 0xFFFFFFFF
@@ -131,125 +226,83 @@ class SOSCommand(gdb.Command):
             return
 
         try:
-            # Managed-only commands on Unix aren't native exports; try bridge managed dispatch first.
-            managed_only = {
-                "dso", "dumpstackobjects", "dumpheap", "verifyheap", "verifyobj", "gcroot",
-                "gcwhere", "pathto", "dumpruntimetypes", "listnearobj", "objsize", "threadpool",
-                "assemblies", "clrmodules", "loadsymbols", "setsymbolserver", "logging", "analyzeoom",
-                "traverseheap"
-            }
-            # Common alias for managed help
-            if self.name.lower() == "soshelp":
-                managed_only.add("soshelp")
-            if self.name.lower() in managed_only and sys.platform.startswith("linux"):
-                # Prefer bridge managed dispatch; fall back to libsos forwarder
-                cmd = self.name.lower().encode('utf-8')
-                args = (arg or "").encode('utf-8')
-                bridge = getattr(SOSCommand, 'bridge_handle', None)
-                attempted = False
-                hres_bridge = None
-                hosting_initialized = False
-                if bridge is not None:
-                    try:
-                        dispatch = bridge.DispatchManagedCommand
-                        dispatch.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
-                        dispatch.restype = ctypes.c_int
-                        hres_bridge = dispatch(cmd, args)
-                        attempted = True
-                        if TRACE_ENABLED:
-                            gdb.write(f"[sos] Bridge DispatchManagedCommand('{self.name}') => 0x{hres_bridge:08x}\n")
-                        if hres_bridge == 0:
-                            return
-                        # Check hosting status if bridge is present
-                        try:
-                            get_host = getattr(bridge, 'GetHostForSos', None)
-                            if get_host is not None:
-                                get_host.argtypes = []
-                                get_host.restype = ctypes.c_void_p
-                                hosting_initialized = bool(get_host())
-                        except Exception:
-                            pass
-                    except Exception:
-                        pass
-                # Try libsos forwarder as a fallback
-                hres_forwarder = None
-                try:
-                    if getattr(SOSCommand, 'sos_dispatch_managed', None):
-                        hres_forwarder = SOSCommand.sos_dispatch_managed(cmd, args)
-                        attempted = True or attempted
-                        if hres_forwarder == 0:
-                            return
-                except Exception:
-                    pass
-                # Distinguish hosting-not-initialized vs command failure
-                if hosting_initialized or (hres_bridge not in (None, 0)) or (hres_forwarder not in (None, 0)):
-                    # Managed layer handled the call but returned a failure HRESULT
-                    h = hres_bridge if hres_bridge not in (None, 0) else (hres_forwarder if hres_forwarder not in (None, 0) else 0)
-                    if h:
-                        h32 = h & 0xFFFFFFFF
-                        hint = _hint_for_hresult(h32)
-                        if hint:
-                            gdb.write(f"Managed command '{self.name}' failed (HRESULT=0x{h32:08x}). {hint}\n")
-                        else:
-                            gdb.write(f"Managed command '{self.name}' failed (HRESULT=0x{h32:08x}).\n")
-                    return
-                # If we never managed to dispatch, print guidance
-                gdb.write(
-                    "This command is managed-only on Linux and isn’t exported from libsos.so.\n"
-                    "Managed hosting is not initialized or failed.\n"
-                    "Try: sethostruntime or use lldb’s sos plugin / dotnet-dump.\n"
-                )
-                return
-
+            # Prefer native exports first to avoid managed noise like "Unrecognized SOS command".
             # Resolve the exported SOS symbol for this command
-            def to_export_candidates(cmd: str):
-                manual = {
-                    "dumpobj": "DumpObj",
-                    "clrstack": "ClrStack",
-                    "dso": "DumpStackObjects",
-                }
-                candidates = []
-                if cmd in manual:
-                    candidates.append(manual[cmd])
-                known_camel = {
-                    "clrstack": "ClrStack",
-                    "dumpheap": "DumpHeap",
-                    "gcroot": "GcRoot",
-                }
-                if cmd in known_camel:
-                    title = known_camel[cmd]
-                else:
-                    title = ''.join(part.capitalize() for part in re.split(r'[^0-9A-Za-z]+', cmd) if part)
-                if title and title not in candidates:
-                    candidates.append(title)
-                cap = cmd.capitalize()
-                if cap not in candidates:
-                    candidates.append(cap)
-                if cmd not in candidates:
-                    candidates.append(cmd)
-                return candidates
 
             sos_func = None
             tried = []
-            for sym in to_export_candidates(self.name):
+            for sym in _to_export_candidates_common(self.name.lower()):
                 tried.append(sym)
                 try:
                     sos_func = getattr(SOSCommand.sos_handle, sym)
                     break
                 except AttributeError:
                     continue
-            if sos_func is None:
-                gdb.write(f"Error: Command '{self.name}' not found in libsos.so (tried symbols: {', '.join(tried)}).\n")
-                return
-            sos_func.argtypes = [PVOID, PCSTR]
-            sos_func.restype = HRESULT
+            if sos_func is not None:
+                sos_func.argtypes = [PVOID, PCSTR]
+                sos_func.restype = HRESULT
 
-            client_ptr = ctypes.byref(SOSCommand.gdb_services.illldb_ptr)
-            if TRACE_ENABLED:
-                gdb.write("[sos] Dispatching SOS command with ILLDBServices client\n")
-            hr = sos_func(client_ptr, (arg or "").encode('utf-8'))
-            if hr != 0:
-                gdb.write(f"Command '{self.name}' failed with HRESULT {hr}.\n")
+                client_ptr = ctypes.byref(SOSCommand.gdb_services.illldb_ptr)
+                if TRACE_ENABLED:
+                    gdb.write("[sos] Dispatching SOS command with ILLDBServices client\n")
+                hr = sos_func(client_ptr, (arg or "").encode('utf-8'))
+                if hr != 0:
+                    gdb.write(f"Command '{self.name}' failed with HRESULT {hr}.\n")
+                return
+
+            # Native export not found; try managed dispatch next
+            cmd = self.name.lower().encode('utf-8')
+            args = (arg or "").encode('utf-8')
+            bridge = getattr(SOSCommand, 'bridge_handle', None)
+            hres_bridge = None
+            hosting_initialized = False
+            if bridge is not None:
+                try:
+                    dispatch = bridge.DispatchManagedCommand
+                    dispatch.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
+                    dispatch.restype = ctypes.c_int
+                    hres_bridge = dispatch(cmd, args)
+                    if TRACE_ENABLED:
+                        gdb.write(f"[sos] Bridge DispatchManagedCommand('{self.name}') => 0x{hres_bridge:08x}\n")
+                    if hres_bridge == 0:
+                        return
+                    # Check hosting status if bridge is present
+                    try:
+                        get_host = getattr(bridge, 'GetHostForSos', None)
+                        if get_host is not None:
+                            get_host.argtypes = []
+                            get_host.restype = ctypes.c_void_p
+                            hosting_initialized = bool(get_host())
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+            # Try libsos forwarder as a fallback
+            hres_forwarder = None
+            try:
+                if getattr(SOSCommand, 'sos_dispatch_managed', None):
+                    hres_forwarder = SOSCommand.sos_dispatch_managed(cmd, args)
+                    if hres_forwarder == 0:
+                        return
+            except Exception:
+                pass
+            # Distinguish hosting-not-initialized vs command failure
+            if hosting_initialized or (hres_bridge not in (None, 0)) or (hres_forwarder not in (None, 0)):
+                h = hres_bridge if hres_bridge not in (None, 0) else (hres_forwarder if hres_forwarder not in (None, 0) else 0)
+                if h:
+                    h32 = h & 0xFFFFFFFF
+                    hint = _hint_for_hresult(h32)
+                    if hint:
+                        gdb.write(f"Managed command '{self.name}' failed (HRESULT=0x{h32:08x}). {hint}\n")
+                    else:
+                        gdb.write(f"Managed command '{self.name}' failed (HRESULT=0x{h32:08x}).\n")
+                return
+            # If we never managed to dispatch, print guidance
+            gdb.write(
+                "This command is managed-only on Linux and isn’t exported from libsos.so.\n"
+                "Managed hosting is not initialized or failed.\n"
+                "Try: sethostruntime or use lldb’s sos plugin / dotnet-dump.\n"
+            )
 
         except AttributeError:
             gdb.write(f"Error: Command '{self.name}' not found in libsos.so.\n")
@@ -257,12 +310,95 @@ class SOSCommand(gdb.Command):
             gdb.write(f"An error occurred while executing '{self.name}': {e}\n")
 
 
-# Register commands
-DumpObjCommand = SOSCommand("dumpobj")
-ClrStackCommand = SOSCommand("clrstack")
-DsoCommand = SOSCommand("dso")
-DumpHeapCommand = SOSCommand("dumpheap")
-SosHelpCommand = SOSCommand("soshelp")
+
+class SosUmbrellaCommand(gdb.Command):
+    """sos <command> [args] — Dispatch any SOS command without per-command wrappers."""
+    def __init__(self):
+        super(SosUmbrellaCommand, self).__init__("sos", gdb.COMMAND_DATA)
+
+    def _to_export_candidates(self, cmd: str):
+        return _to_export_candidates_common(cmd)
+
+    def invoke(self, arg, from_tty):
+        if not SOSCommand.lazy_load_sos():
+            return
+        parts = arg.strip().split(None, 1) if arg else []
+        if not parts:
+            gdb.write("Usage: sos <command> [args]\n")
+            return
+        name = parts[0].lower()
+        rest = parts[1] if len(parts) > 1 else ""
+
+        # Friendly notice for WinDbg/cdb-only commands
+        if name in _UNSUPPORTED_WINDBG_ONLY:
+            gdb.write("This command is only supported under windbg/cdb currently\n")
+            return
+
+        # 1) Try native export first to avoid managed-side warning output
+        tried = []
+        sos_func = None
+        for sym in self._to_export_candidates(name):
+            tried.append(sym)
+            try:
+                sos_func = getattr(SOSCommand.sos_handle, sym)
+                break
+            except AttributeError:
+                continue
+        if sos_func is not None:
+            try:
+                sos_func.argtypes = [PVOID, PCSTR]
+                sos_func.restype = HRESULT
+                client_ptr = ctypes.byref(SOSCommand.gdb_services.illldb_ptr)
+                if TRACE_ENABLED:
+                    gdb.write("[sos] Dispatching native SOS command via ILLDBServices client\n")
+                hr = sos_func(client_ptr, (rest or "").encode('utf-8'))
+                if hr != 0:
+                    gdb.write(f"Command '{name}' failed with HRESULT {hr}.\n")
+                return
+            except Exception as e:
+                gdb.write(f"An error occurred while executing '{name}': {e}\n")
+                return
+
+    # 2) Fall back to managed dispatch via bridge/libsos forwarder
+        cmd = name.encode('utf-8')
+        args = rest.encode('utf-8')
+        bridge = getattr(SOSCommand, 'bridge_handle', None)
+        hres_bridge = None
+        try:
+            if bridge is not None:
+                dispatch = bridge.DispatchManagedCommand
+                dispatch.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
+                dispatch.restype = ctypes.c_int
+                hres_bridge = dispatch(cmd, args)
+                if TRACE_ENABLED:
+                    gdb.write(f"[sos] Bridge DispatchManagedCommand('{name}') => 0x{hres_bridge:08x}\n")
+                if hres_bridge == 0:
+                    return
+        except Exception:
+            pass
+        try:
+            if getattr(SOSCommand, 'sos_dispatch_managed', None):
+                hres = SOSCommand.sos_dispatch_managed(cmd, args)
+                if hres == 0:
+                    return
+        except Exception:
+            pass
+        gdb.write(f"Error: Command '{name}' not found (tried symbols: {', '.join(tried)}).\n")
+
+
+SosUmbrellaCommand()
+
+
+class ExtUmbrellaCommand(gdb.Command):
+    """ext <command> [args] — Alias for 'sos' umbrella."""
+    def __init__(self):
+        super(ExtUmbrellaCommand, self).__init__("ext", gdb.COMMAND_DATA)
+
+    def invoke(self, arg, from_tty):
+        gdb.execute(f"sos {arg}")
+
+
+ExtUmbrellaCommand()
 
 SOSTraceCommand()
 
@@ -309,3 +445,47 @@ class SetHostRuntimeCommand(gdb.Command):
 
 
 SetHostRuntimeCommand()
+
+
+# Register the same command set LLDB does for parity and direct use without 'sos' prefix
+def _register_default_commands():
+    names = [
+        # Native exports
+    "clrstack", "clrthreads", "clru", "dbgout", "bpmd", "dumpalc", "dumparray", "dumpassembly",
+        "dumpclass", "dumpdelegate", "dumpdomain", "dumpgcdata", "dumpil", "dumplog", "dumpmd",
+        "dumpmodule", "dumpmt", "dumpobj", "dumpsig", "dumpsigelem", "dumpstack", "dumpvc",
+        "eestack", "eeversion", "ehinfo", "findappdomain", "findroots", "gchandles", "gcinfo",
+        "histclear", "histinit", "histobj", "histobjfind", "histroot", "histstats", "ip2md",
+        "name2ee", "pe", "printexception", "runtimes", "stoponcatch", "setclrpath", "soshelp",
+        "sosstatus", "sosflush", "syncblk", "threadstate", "token2ee",
+        # Managed or both
+    "analyzeoom", "assemblies", "clrmodules", "crashinfo", "dumpasync", "dumpheap", "dumphttp",
+        "dumpruntimetypes", "dumprequests", "dumpstackobjects", "dso", "eeheap", "gcroot",
+        "gcwhere", "listnearobj", "loadsymbols", "logging", "objsize", "pathto", "setsymbolserver",
+        "threadpool", "verifyheap", "verifyobj", "traverseheap", "gcheapstat", "finalizequeue",
+    ]
+    for n in names:
+        try:
+            SOSCommand(n)
+        except Exception:
+            pass
+
+
+_register_default_commands()
+
+
+# Register stubs for WinDbg/cdb-only commands so direct invocation prints a clear message.
+class UnsupportedSosCommand(gdb.Command):
+    def __init__(self, name: str):
+        super(UnsupportedSosCommand, self).__init__(name, gdb.COMMAND_SUPPORT)
+        self._name = name
+
+    def invoke(self, arg, from_tty):
+        gdb.write("This command is only supported under windbg/cdb currently\n")
+
+
+for _n in sorted(_UNSUPPORTED_WINDBG_ONLY):
+    try:
+        UnsupportedSosCommand(_n)
+    except Exception:
+        pass
