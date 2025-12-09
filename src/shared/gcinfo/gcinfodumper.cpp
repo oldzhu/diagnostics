@@ -617,7 +617,7 @@ GcInfoDumper::EnumerateStateChangesResults GcInfoDumper::EnumerateStateChanges (
 
     REGDISPLAY regdisp;
 
-    ZeroMemory(static_cast<void *>(&regdisp), sizeof(regdisp));
+    ZeroMemory(static_cast<void*>(&regdisp), sizeof(regdisp));
 
     regdisp.pContext = &regdisp.ctxOne;
     regdisp.IsCallerContextValid = TRUE;
